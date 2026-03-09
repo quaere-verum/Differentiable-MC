@@ -81,7 +81,7 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--observation-freq", type=int, default=252)
     parser.add_argument("--hedging-freq", type=int, default=252)
 
-    parser.add_argument("--hidden-sizes", nargs="*", default=[])
+    parser.add_argument("--hidden-sizes", type=int, nargs="*", default=[])
     parser.add_argument("--variance-feature-type", type=str, default="learned")
 
     parser.add_argument("--n-eval-paths", type=int, default=2**19)

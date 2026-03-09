@@ -5,7 +5,7 @@ $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 Write-Host "Sweep timestamp = $timestamp"
 
 $hiddenSizesGrid = @(
-    ,@()
+    ,@(16, 16)
 )
 
 $barrierGrid = @(75.0, 85.0)
