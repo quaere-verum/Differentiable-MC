@@ -81,12 +81,12 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--observation-freq", type=int, default=252)
     parser.add_argument("--hedging-freq", type=int, default=252)
 
-    parser.add_argument("--hidden-sizes", type=int, nargs="*", default=[16, 16])
+    parser.add_argument("--hidden-sizes", nargs="*", default=[])
     parser.add_argument("--variance-feature-type", type=str, default="learned")
 
-    parser.add_argument("--n-eval-paths", type=int, default=2**18)
+    parser.add_argument("--n-eval-paths", type=int, default=2**19)
     parser.add_argument("--n-train-iterations", type=int, default=1000)
-    parser.add_argument("--batch-size", type=int, default=2**16)
+    parser.add_argument("--batch-size", type=int, default=2**17)
 
     parser.add_argument("--s0", type=float, default=100.0)
     parser.add_argument("--v0", type=float, default=0.04)
@@ -106,7 +106,6 @@ def parse_args() -> ExperimentConfig:
         variance_feature_type = VarianceFeatureType.NONE
     else:
         raise ValueError(f"Unknown variance_feature_type: {vft_name}")
-
     return ExperimentConfig(
         log_dir=args.log_dir,
         seed=args.seed,
