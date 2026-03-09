@@ -20,10 +20,10 @@ import argparse
 import pprint
 import hashlib
 import json
-import math
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
+from enum import Enum
 
 @dataclass
 class ExperimentConfig:
@@ -691,6 +691,100 @@ def save_experiment_summary(
 
     return run_dir
 
+def _jsonable(x: Any) -> Any:
+    if isinstance(x, Enum):
+        # Prefer stable string names for cache keys.
+        return x.name
+    if is_dataclass(x):
+        return {k: _jsonable(v) for k, v in asdict(x).items()}
+    if isinstance(x, dict):
+        return {str(k): _jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_jsonable(v) for v in x]
+    return x
+
+
+def make_pricing_payload(config: ExperimentConfig) -> dict[str, Any]:
+    return {
+        "product": {
+            "barrier": float(config.barrier),
+            "strike": float(config.strike),
+            "maturity": float(config.maturity),
+        },
+        "model": {
+            "s0": float(config.s0),
+            "v0": float(config.v0),
+            "kappa": float(config.kappa),
+            "theta": float(config.theta),
+            "xi": float(config.xi),
+            "rho": float(config.rho),
+        },
+        "simulation": {
+            "observation_freq": int(config.observation_freq),
+        },
+    }
+
+
+def make_pricing_key(config: ExperimentConfig) -> str:
+    payload = make_pricing_payload(config)
+    return json.dumps(_jsonable(payload), sort_keys=True, separators=(",", ":"))
+
+
+def get_or_compute_initial_cash(
+    config: ExperimentConfig,
+    model: HestonModel,
+    product: DownAndOutBarrierOption,
+    device: torch.device | str,
+    *,
+    n_pricing_paths: int = 2**20,
+) -> float:
+    output_root = Path(config.log_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    premia_path = output_root / "premia.json"
+    pricing_key = make_pricing_key(config)
+
+    # Load cache if present
+    if premia_path.is_file():
+        with premia_path.open("r", encoding="utf-8") as f:
+            premia = json.load(f)
+    else:
+        premia = {}
+
+    # Cache hit
+    if pricing_key in premia:
+        initial_cash = float(premia[pricing_key]["premium"])
+        return initial_cash
+
+    # Cache miss: compute premium
+    with torch.no_grad():
+        model = model.to(device)
+        product = product.to(device)
+
+        time_grid = product.get_timegrid()
+        model.bind(time_grid)
+        product.bind(time_grid)
+
+        pricing_paths = model.simulate(n_pricing_paths)
+        payoff = product.compute_payoff(pricing_paths)
+        initial_cash = float(payoff.mean().item())
+
+        # Optional diagnostic: MC standard error
+        payoff_std = float(payoff.std(unbiased=False).item())
+        mc_se = payoff_std / (n_pricing_paths ** 0.5)
+
+    premia[pricing_key] = {
+        "premium": initial_cash,
+        "mc_price_n_paths": int(n_pricing_paths),
+        "mc_standard_error": mc_se,
+        "pricing_payload": make_pricing_payload(config),
+    }
+
+    with premia_path.open("w", encoding="utf-8") as f:
+        json.dump(premia, f, indent=2, sort_keys=True)
+
+    return initial_cash
+
 def main():
     config = parse_args()
     pprint.pprint(config)
@@ -731,19 +825,13 @@ def main():
         observation_grid=product_grid.time_grid,
     )
 
-    with torch.no_grad():
-        n_pricing_paths = 2**20
-        model.to(device)
-        product.to(device)
-
-        model.bind(product.get_timegrid())
-        product.bind(product.get_timegrid())
-
-        pricing_paths = model.simulate(n_pricing_paths)
-        payoff = product.compute_payoff(pricing_paths)
-        initial_cash = float(payoff.mean().item())
-
-    print(f"Product value computed over {n_pricing_paths} MC paths, set at: {initial_cash:.4f}.")
+    initial_cash = get_or_compute_initial_cash(
+        config=config,
+        model=model,
+        product=product,
+        device=device,
+        n_pricing_paths=2**20,
+    )
 
     feature_extractor = BarrierOptionFeatureExtractor(
         maturity=maturity,
