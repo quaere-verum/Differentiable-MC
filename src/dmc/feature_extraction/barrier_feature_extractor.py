@@ -13,7 +13,7 @@ class BarrierOptionFeatureExtractor(FeatureExtractor):
         self,
         maturity: float,
         barrier: float,
-        strike: float,
+        strike: float, 
         *,
         variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED
     ):

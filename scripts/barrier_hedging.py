@@ -67,7 +67,7 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
 
-    parser.add_argument("--learning-rate", type=float, default=0.1)
+    parser.add_argument("--learning-rate", type=float, default=0.2)
     parser.add_argument("--cvar-alpha", type=float, default=0.95)
     parser.add_argument("--cvar-softplus-beta", type=float, default=None)
     parser.add_argument("--risk-name", type=str, default="cvar")
@@ -86,7 +86,7 @@ def parse_args() -> ExperimentConfig:
 
     parser.add_argument("--n-eval-paths", type=int, default=2**19)
     parser.add_argument("--n-train-iterations", type=int, default=1000)
-    parser.add_argument("--batch-size", type=int, default=2**17)
+    parser.add_argument("--batch-size", type=int, default=2**15)
 
     parser.add_argument("--s0", type=float, default=100.0)
     parser.add_argument("--v0", type=float, default=0.04)

@@ -5,12 +5,12 @@ $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 Write-Host "Sweep timestamp = $timestamp"
 
 $hiddenSizesGrid = @(
-    ,@(16)
+    ,@(16, 16)
 )
 
-$barrierGrid = @(75.0, 85.0)
-$transactionCostRateGrid = @(1e-3, 1e-2)
-$xiGrid = @(0.75, 1.25)
+$barrierGrid = @(80.0)
+$transactionCostRateGrid = @(1e-3)
+$xiGrid = @(0.75)
 $lossName = @("mse", "cvar")
 $varianceFeatureType = @("markov", "learned", "none")
 
