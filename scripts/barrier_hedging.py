@@ -46,7 +46,7 @@ class ExperimentConfig:
     hedging_freq: int = 252
 
     hidden_sizes: tuple[int, ...] = (16, 16)
-    variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED
+    variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED_FILTER
 
     n_eval_paths: int = 2**19
     n_train_iterations: int = 1000
@@ -99,11 +99,13 @@ def parse_args() -> ExperimentConfig:
 
     vft_name =  getattr(args, "variance_feature_type").lower()
     if vft_name == "learned":
-        variance_feature_type = VarianceFeatureType.LEARNED
+        variance_feature_type = VarianceFeatureType.LEARNED_FILTER
     elif vft_name == "markov":
         variance_feature_type = VarianceFeatureType.MARKOV_STATE
     elif vft_name == "none":
         variance_feature_type = VarianceFeatureType.NONE
+    elif vft_name == "gated":
+        variance_feature_type = VarianceFeatureType.LEARNED_GATED_FILTER
     else:
         raise ValueError(f"Unknown variance_feature_type: {vft_name}")
     return ExperimentConfig(
@@ -902,7 +904,7 @@ def main():
                 start_times=control_grid.time_grid[:-1],
                 end_times=control_grid.time_grid[1:],
             ),
-            log_hidden_state=variance_feature_type == VarianceFeatureType.LEARNED
+            log_hidden_state=variance_feature_type == VarianceFeatureType.LEARNED_FILTER
         )
 
         risk = CVaRRisk(alpha=cvar_alpha, softplus_beta=None, var_estimate_type=VaREstimateType.BATCH)

@@ -5,8 +5,9 @@ from enum import IntEnum
 
 class VarianceFeatureType(IntEnum):
     NONE = 1
-    LEARNED = 2
+    LEARNED_FILTER = 2
     MARKOV_STATE = 3
+    LEARNED_GATED_FILTER = 4
 
 class BarrierOptionFeatureExtractor(FeatureExtractor):
     def __init__(
@@ -15,7 +16,7 @@ class BarrierOptionFeatureExtractor(FeatureExtractor):
         barrier: float,
         strike: float, 
         *,
-        variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED
+        variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED_FILTER
     ):
         super().__init__()
         self._variance_feature_type = variance_feature_type
@@ -23,10 +24,19 @@ class BarrierOptionFeatureExtractor(FeatureExtractor):
         self.register_buffer("barrier", torch.tensor(barrier, dtype=torch.float32))
         self.register_buffer("strike", torch.tensor(strike, dtype=torch.float32))
 
-        if self._variance_feature_type == VarianceFeatureType.LEARNED:
+        if self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER:
             self.register_parameter("alpha_raw", torch.nn.Parameter(torch.tensor(0.0, dtype=torch.float32)))
             self.register_parameter("beta", torch.nn.Parameter(torch.tensor(0.0, dtype=torch.float32)))
             self.register_parameter("bias", torch.nn.Parameter(torch.tensor(0.0, dtype=torch.float32)))
+        if self._variance_feature_type == VarianceFeatureType.LEARNED_GATED_FILTER:
+            self.register_parameter("W_g", torch.nn.Parameter(torch.zeros((2, 1), dtype=torch.float32)))
+            self.register_parameter("U_g", torch.nn.Parameter(torch.zeros((1, 1), dtype=torch.float32)))
+            self.register_parameter("b_g", torch.nn.Parameter(torch.zeros((1,), dtype=torch.float32)))
+
+            self.register_parameter("W_h", torch.nn.Parameter(torch.zeros((2, 1), dtype=torch.float32)))
+            self.register_parameter("U_h", torch.nn.Parameter(torch.zeros((1, 1), dtype=torch.float32)))
+            self.register_parameter("b_h", torch.nn.Parameter(torch.zeros((1,), dtype=torch.float32)))
+        
 
     def get_features(self, state: SimulationState):
         S = state.spot
@@ -45,12 +55,25 @@ class BarrierOptionFeatureExtractor(FeatureExtractor):
         sq_ret = (dlogS * dlogS) / max(dt, 1e-6) 
         sq_ret = sq_ret.unsqueeze(1)
 
-        if self._variance_feature_type == VarianceFeatureType.LEARNED:
+        if self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER:
             next_hidden = (
                 self.get_parameter("alpha_raw").sigmoid() * h_prev
                 + self.get_parameter("beta") * sq_ret
                 + self.get_parameter("bias")
             )
+        elif self._variance_feature_type == VarianceFeatureType.LEARNED_GATED_FILTER:
+            z = torch.cat((dlogS.unsqueeze(1), sq_ret), dim=1)
+            gate = torch.sigmoid(
+                torch.matmul(z, self.get_parameter("W_g"))
+                + torch.matmul(h_prev, self.get_parameter("U_g"))
+                + self.get_parameter("b_g") 
+            )
+            h_tilde = torch.tanh(
+                torch.matmul(z, self.get_parameter("W_h"))
+                + torch.matmul(h_prev, self.get_parameter("U_h"))
+                + self.get_parameter("b_h") 
+            )
+            next_hidden = (1.0 - gate) * h_tilde + gate * h_prev
         else:
             next_hidden = None
            
@@ -62,7 +85,10 @@ class BarrierOptionFeatureExtractor(FeatureExtractor):
         alive = (S_min  > self.get_buffer("barrier")).to(S.dtype).unsqueeze(1)
 
         features = [tau, log_barrier_dist, log_moneyness, alive]
-        if self._variance_feature_type == VarianceFeatureType.LEARNED:
+        if (
+            self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER
+            or self._variance_feature_type == VarianceFeatureType.LEARNED_GATED_FILTER
+        ):
             features.append(next_hidden)
         elif self._variance_feature_type == VarianceFeatureType.MARKOV_STATE:
             features.append(state.variance.unsqueeze(1))
@@ -70,7 +96,14 @@ class BarrierOptionFeatureExtractor(FeatureExtractor):
         return FeatureExtractorResult(features, next_hidden)
     
     def hidden_state_dim(self):
-        return 1 if self._variance_feature_type == VarianceFeatureType.LEARNED else None
+        return (
+            1 
+            if self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER 
+            else 1
+            if self._variance_feature_type == VarianceFeatureType.LEARNED_GATED_FILTER
+            else 
+            None
+        )
     
     def feature_dim(self):
         return 4 if self._variance_feature_type == VarianceFeatureType.NONE else 5
