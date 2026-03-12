@@ -4,21 +4,22 @@ Set-Location $PSScriptRoot
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 Write-Host "Sweep timestamp = $timestamp"
 $hiddenSizesGrid = @(
+    ,@()
     ,@(16)
     ,@(16, 16)
     ,@(16, 16, 16)
     ,@(16, 16, 16, 16)
-    ,@(32, 32)
+    ,@(16, 16, 16, 16, 16)
 )
 
 $barrierGrid = @(80.0)
 $transactionCostRateGrid = @(1e-3)
-$xiGrid = @(0.75)
+$volregime = @("normal", "stressed")
 $lossName = @("mse", "cvar")
 $varianceFeatureType = @(
-    # , "markov" 
-    # , "learned" 
-    # , "none"
+    , "markov" 
+    , "learned" 
+    , "none"
     , "gated"
 )
 
@@ -27,7 +28,7 @@ $runCount = 0
 foreach ($hiddenSizes in $hiddenSizesGrid) {
     foreach ($barrier in $barrierGrid) {
         foreach ($transactionCostRate in $transactionCostRateGrid) {
-            foreach ($xi in $xiGrid) {
+            foreach ($vol in $volRegime) {
                 foreach ($loss in $lossName) {
                     foreach ($vft in $varianceFeatureType) {
                         $runCount += 1
@@ -38,7 +39,7 @@ foreach ($hiddenSizes in $hiddenSizesGrid) {
                         Write-Host "hidden_sizes          = $($hiddenSizes -join ',')"
                         Write-Host "barrier               = $barrier"
                         Write-Host "transaction_cost_rate = $transactionCostRate"
-                        Write-Host "xi                    = $xi"
+                        Write-Host "vol                   = $vol"
                         Write-Host "loss_name             = $loss"
                         Write-Host "variance_feature_type = $vft"
                         Write-Host "=================================================="
@@ -51,7 +52,7 @@ foreach ($hiddenSizes in $hiddenSizesGrid) {
                             "--log-dir", "logs/$timestamp",
                             "--barrier", $barrier,
                             "--transaction-cost-rate", $transactionCostRate,
-                            "--xi", $xi,
+                            "--vol-regime", $vol,
                             "--risk-name", $loss,
                             "--variance-feature-type", $vft
                         )

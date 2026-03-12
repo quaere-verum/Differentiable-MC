@@ -52,6 +52,7 @@ class ExperimentConfig:
     n_train_iterations: int = 1000
     batch_size: int = 2**16
 
+    vol_regime: str = "normal"
     s0: float = 100.0
     v0: float = 0.04
     kappa: float = 2.0
@@ -88,12 +89,13 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--n-train-iterations", type=int, default=1000)
     parser.add_argument("--batch-size", type=int, default=2**15)
 
-    parser.add_argument("--s0", type=float, default=100.0)
-    parser.add_argument("--v0", type=float, default=0.04)
-    parser.add_argument("--kappa", type=float, default=2.0)
-    parser.add_argument("--theta", type=float, default=0.04)
-    parser.add_argument("--xi", type=float, default=1.0)
-    parser.add_argument("--rho", type=float, default=-0.7)
+    parser.add_argument("--vol-regime", type=str, default="normal")
+    # parser.add_argument("--s0", type=float, default=100.0)
+    # parser.add_argument("--v0", type=float, default=0.04)
+    # parser.add_argument("--kappa", type=float, default=2.0)
+    # parser.add_argument("--theta", type=float, default=0.04)
+    # parser.add_argument("--xi", type=float, default=1.0)
+    # parser.add_argument("--rho", type=float, default=-0.7)
 
     args = parser.parse_args()
 
@@ -108,6 +110,22 @@ def parse_args() -> ExperimentConfig:
         variance_feature_type = VarianceFeatureType.LEARNED_GATED_FILTER
     else:
         raise ValueError(f"Unknown variance_feature_type: {vft_name}")
+    
+    vol_regime = getattr(args, "vol_regime", None)
+    if vol_regime == "normal":
+        v0 = 0.04
+        theta = 0.04
+        kappa = 2.0
+        rho = -0.6
+        xi = 0.35
+    elif vol_regime == "stressed":
+        v0 = 0.09
+        theta = 0.09
+        kappa = 1.5
+        rho = -0.8
+        xi = 0.50
+    else:
+        raise ValueError(f"Unknown vol_regime: {vol_regime}")
     return ExperimentConfig(
         log_dir=args.log_dir,
         seed=args.seed,
@@ -127,12 +145,13 @@ def parse_args() -> ExperimentConfig:
         n_eval_paths=args.n_eval_paths,
         n_train_iterations=args.n_train_iterations,
         batch_size=args.batch_size,
-        s0=args.s0,
-        v0=args.v0,
-        kappa=args.kappa,
-        theta=args.theta,
-        xi=args.xi,
-        rho=args.rho,
+        vol_regime=vol_regime,
+        s0=100.0,
+        v0=v0,
+        kappa=kappa,
+        theta=theta,
+        xi=xi,
+        rho=rho,
     )
 
 @dataclass
@@ -382,7 +401,7 @@ def make_run_name(config: ExperimentConfig) -> str:
         f"hs_{hidden}"
         f"__bar_{_sanitize_float_str(config.barrier)}"
         f"__tc_{_sanitize_float_str(config.transaction_cost_rate)}"
-        f"__xi_{_sanitize_float_str(config.xi)}"
+        f"__vol_{config.vol_regime}"
         f"__vf_{vf}"
         f"__loss_{config.risk_name}"
         f"__seed_{config.seed}"
@@ -395,16 +414,6 @@ def _flatten_1d(x: torch.Tensor) -> torch.Tensor:
     if x.ndim != 1:
         raise ValueError(f"Expected 1D tensor, got shape {tuple(x.shape)}")
     return x
-
-def _quantiles(x: torch.Tensor, probs: list[float]) -> dict[str, float]:
-    q = torch.tensor(probs, dtype=torch.float64)
-    vals = torch.quantile(x, q)
-    out: dict[str, float] = {}
-    for p, v in zip(probs, vals):
-        pct = int(round(100 * p))
-        out[f"q{pct:02d}"] = float(v.item())
-    return out
-
 
 def _var_cvar_from_pnl(pnl: torch.Tensor, alpha: float) -> dict[str, float]:
     """
@@ -467,60 +476,6 @@ def _basic_1d_stats(x: torch.Tensor, *, include_quantiles: bool = True) -> dict[
         "zero_fraction": float((x == 0).to(torch.float64).mean().item()),
     }
 
-    if include_quantiles:
-        out["quantiles"] = _quantiles(x, [0.01, 0.05, 0.10, 0.50, 0.90, 0.95, 0.99])
-
-    return out
-
-def _time_series_summary(x: torch.Tensor, name: str) -> dict[str, Any]:
-    """
-    Summarize [B, K] or [B, K+1] tensor over paths at each time index.
-    Avoid storing all paths; keep per-time cross-sectional summaries.
-    """
-    x = x.detach().to(torch.float64).cpu()
-
-    if x.ndim != 2:
-        raise ValueError(f"{name} must be 2D, got shape {tuple(x.shape)}")
-
-    mean_t = x.mean(dim=0)
-    std_t = x.std(dim=0, unbiased=False)
-    p05_t = torch.quantile(x, 0.05, dim=0)
-    p50_t = torch.quantile(x, 0.50, dim=0)
-    p95_t = torch.quantile(x, 0.95, dim=0)
-
-    return {
-        "shape": list(x.shape),
-        "time_mean": mean_t.tolist(),
-        "time_std": std_t.tolist(),
-        "time_q05": p05_t.tolist(),
-        "time_q50": p50_t.tolist(),
-        "time_q95": p95_t.tolist(),
-        "global_mean": float(x.mean().item()),
-        "global_std": float(x.std(unbiased=False).item()),
-        "global_min": float(x.min().item()),
-        "global_max": float(x.max().item()),
-    }
-
-def _optional_tensor_summary(x: torch.Tensor | None, name: str) -> dict[str, Any] | None:
-    if x is None:
-        return None
-
-    x = x.detach().to(torch.float64).cpu()
-    out: dict[str, Any] = {
-        "shape": list(x.shape),
-        "global_mean": float(x.mean().item()),
-        "global_std": float(x.std(unbiased=False).item()),
-        "global_min": float(x.min().item()),
-        "global_max": float(x.max().item()),
-    }
-
-    # For [B, K, F] or [B, K, H], also keep mean/std over batch and time per feature dimension.
-    if x.ndim == 3:
-        mean_last = x.mean(dim=(0, 1))
-        std_last = x.std(dim=(0, 1), unbiased=False)
-        out["mean_by_last_dim"] = mean_last.tolist()
-        out["std_by_last_dim"] = std_last.tolist()
-
     return out
 
 def summarize_logged_hedge_result(
@@ -537,14 +492,12 @@ def summarize_logged_hedge_result(
 
     alpha = config.cvar_alpha
 
-    hidden_variance_last = None
     if result.hidden_variance is not None:
         hv = result.hidden_variance.detach().to(torch.float64).cpu()
         if hv.ndim != 2:
             raise ValueError(
                 f"hidden_variance must have shape [B, K], got {tuple(hv.shape)}"
             )
-        hidden_variance_last = hv[:, -1]
 
     hidden_state_variance_corr = None
     if result.hidden_states is not None and result.hidden_variance is not None:
@@ -636,21 +589,6 @@ def summarize_logged_hedge_result(
             "corr_hidden_variance_trades": hidden_variance_trade_corr,
             "hidden_state_hidden_variance_correlation": hidden_state_variance_corr,
         },
-        "path_summaries": {
-            "wealth_path": _time_series_summary(result.wealth_path, "wealth_path"),
-            "positions": _time_series_summary(result.positions, "positions"),
-            "trades": _time_series_summary(result.trades, "trades"),
-            "transaction_costs": _time_series_summary(
-                result.transaction_costs, "transaction_costs"
-            ),
-            "hidden_variance": (
-                _time_series_summary(result.hidden_variance, "hidden_variance")
-                if result.hidden_variance is not None else None
-            ),
-        },
-        "optional_summaries": {
-            "hidden_states": _optional_tensor_summary(result.hidden_states, "hidden_states"),
-        },
     }
 
     return metrics
@@ -661,6 +599,7 @@ def save_experiment_summary(
     training_summary: TrainingSummary,
     controller: torch.nn.Module,
     feature_extractor: torch.nn.Module | None = None,
+    save_terminal_distributions: bool = True,
 ) -> Path:
     output_root = Path(config.log_dir)
     run_dir = output_root / make_run_name(config)
@@ -671,6 +610,7 @@ def save_experiment_summary(
     training_path = run_dir / "training.json"
     controller_path = run_dir / "controller.pt"
     feature_extractor_path = run_dir / "feature_extractor.pt"
+    terminal_dist_path = run_dir / "terminal_distributions.pt"
 
     config_payload = _to_serializable(config)
     metrics_payload = summarize_logged_hedge_result(result, config)
@@ -690,6 +630,13 @@ def save_experiment_summary(
     if feature_extractor is not None:
         torch.save(feature_extractor.state_dict(), feature_extractor_path)
 
+    if save_terminal_distributions:
+        terminal_payload = {
+            "pnl": result.pnl.detach().to(torch.float32).cpu().reshape(-1),
+            "total_transaction_cost": result.total_transaction_cost.detach().to(torch.float32).cpu().reshape(-1),
+            "total_turnover": result.total_turnover.detach().to(torch.float32).cpu().reshape(-1),
+        }
+        torch.save(terminal_payload, terminal_dist_path)
     return run_dir
 
 def _jsonable(x: Any) -> Any:
@@ -739,10 +686,10 @@ def get_or_compute_initial_cash(
     *,
     n_pricing_paths: int = 2**20,
 ) -> float:
-    output_root = Path(config.log_dir)
+    output_root = Path("premia")
     output_root.mkdir(parents=True, exist_ok=True)
 
-    premia_path = output_root / "premia.json"
+    premia_path = output_root / "barrier.json"
     pricing_key = make_pricing_key(config)
 
     # Load cache if present

@@ -14,28 +14,19 @@ METRIC_SPECS: dict[str, list[str]] = {
         "mean", "std", "min", "max",
         "loss_var_alpha", "loss_cvar_alpha",
         "skewness", "excess_kurtosis",
-        "negative_fraction", "positive_fraction",
-        "quantiles.q01", "quantiles.q05", "quantiles.q10",
-        "quantiles.q50", "quantiles.q90", "quantiles.q95", "quantiles.q99",
     ],
     "total_transaction_cost": [
         "mean", "std", "min", "max",
         "skewness", "excess_kurtosis",
-        "negative_fraction", "positive_fraction", "zero_fraction",
-        "quantiles.q01", "quantiles.q05", "quantiles.q10",
-        "quantiles.q50", "quantiles.q90", "quantiles.q95", "quantiles.q99",
     ],
     "total_turnover": [
         "mean", "std", "min", "max",
         "skewness", "excess_kurtosis",
-        "negative_fraction", "positive_fraction", "zero_fraction",
-        "quantiles.q01", "quantiles.q05", "quantiles.q10",
-        "quantiles.q50", "quantiles.q90", "quantiles.q95", "quantiles.q99",
     ],
 }
 
 COMPARE_AXES = ["hidden_arch", "variance_feature", "loss_name"]
-REGIME_AXES = ["transaction_cost_rate", "xi"]
+REGIME_AXES = ["transaction_cost_rate", "vol_regime"]
 
 
 def flatten_dict(d: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, Any]:
@@ -71,22 +62,11 @@ def normalise_hidden_sizes(x: Any) -> str:
 def infer_variance_feature_label(x: Any) -> str:
     if x is None:
         return "unknown"
-    if isinstance(x, str):
-        s = x.strip().lower()
-        if s in {"markov", "learned", "none"}:
-            return s
-        if "markov" in s:
-            return "markov"
-        if "learned" in s:
-            return "learned"
-        if "none" in s:
-            return "none"
-        return s
     try:
         i = int(x)
-    except Exception:
-        return str(x)
-    mapping = {1: "none", 2: "learned", 3: "markov"}
+    except Exception as e:
+        raise e
+    mapping = {1: "none", 2: "filter", 3: "markov", 4: "gated"}
     return mapping.get(i, f"vf_{i}")
 
 
@@ -107,7 +87,7 @@ def load_runs(root: Path) -> pd.DataFrame:
         row.update({f"metrics.{k}": v for k, v in flatten_dict(metrics).items()})
 
         row["transaction_cost_rate"] = float(config["transaction_cost_rate"])
-        row["xi"] = float(config["xi"])
+        row["vol_regime"] = config["vol_regime"]
         row["loss_name"] = str(config.get("risk_name", config.get("loss_name", "unknown"))).lower()
         row["variance_feature"] = infer_variance_feature_label(config.get("variance_feature_type"))
         row["hidden_arch"] = normalise_hidden_sizes(config.get("hidden_sizes"))
@@ -140,10 +120,6 @@ def make_pairwise_deltas(df: pd.DataFrame, metric_name: str, compare_col: str, l
         f"{metric_name}.std",
         f"{metric_name}.loss_var_alpha",
         f"{metric_name}.loss_cvar_alpha",
-        f"{metric_name}.quantiles.q01",
-        f"{metric_name}.quantiles.q05",
-        f"{metric_name}.quantiles.q95",
-        f"{metric_name}.quantiles.q99",
     ]
     metric_cols = [c for c in metric_cols if c in df.columns]
     if not metric_cols or compare_col not in df.columns:
@@ -216,8 +192,8 @@ def write_regime_report(
 ) -> None:
     lines: list[str] = []
     tc = regime_df["transaction_cost_rate"].iloc[0]
-    xi = regime_df["xi"].iloc[0]
-    lines.append(f"# Regime summary: transaction_cost_rate={tc}, xi={xi}\n\n")
+    vol_regime = regime_df["vol_regime"].iloc[0]
+    lines.append(f"# Regime summary: transaction_cost_rate={tc}, vol_regime={vol_regime}\n\n")
     lines.append(f"- runs loaded: **{len(regime_df)}**\n")
     for c in COMPARE_AXES:
         if c in regime_df.columns:
@@ -258,8 +234,8 @@ def main() -> None:
 
     regime_index: list[dict[str, Any]] = []
 
-    for (tc, xi), regime_df in df.groupby(REGIME_AXES, dropna=False):
-        regime_name = f"tc_{sanitize_float(float(tc))}__xi_{sanitize_float(float(xi))}"
+    for (tc, vol_regime), regime_df in df.groupby(REGIME_AXES, dropna=False):
+        regime_name = f"tc_{sanitize_float(float(tc))}__vol_{vol_regime}"
         regime_dir = out_root / regime_name
         regime_dir.mkdir(parents=True, exist_ok=True)
 
@@ -289,7 +265,7 @@ def main() -> None:
 
         regime_index.append({
             "transaction_cost_rate": float(tc),
-            "xi": float(xi),
+            "vol_regime": vol_regime,
             "regime_dir": regime_name,
             "n_runs": int(len(regime_df)),
         })
