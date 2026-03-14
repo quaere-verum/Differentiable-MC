@@ -2,9 +2,13 @@ from dmc.models.heston import HestonModel, HestonParameters
 from dmc.simulation.simulation_grid import SimulationGrid
 from dmc.risk.mse import MSERisk
 from dmc.risk.cvar import CVaRRisk, VaREstimateType
-from dmc.products.barrier_option import DownAndOutCallOption
+from dmc.products.barrier_option import DownAndOutCallOption, DownAndOutPutOption
 from dmc.control.mlp_controller import MlpController
-from dmc.feature_extraction.barrier_feature_extractor import DownAndOutCallFeatureExtractor, VarianceFeatureType
+from dmc.feature_extraction.barrier_feature_extractor import (
+    DownAndOutCallFeatureExtractor,
+    DownAndOutPutFeatureExtractor,
+    VarianceFeatureType,
+)
 from dmc.training.hedging_trainer import HedgingTrainer, TrainingSummary
 from dmc.hedging.hedging import ControlIntervals
 from itertools import chain
@@ -37,6 +41,7 @@ class ExperimentConfig:
     cvar_softplus_beta: float | None = None
     risk_name: str = "cvar"
 
+    put_or_call: str = "call"
     barrier: float = 80.0
     strike: float = 100.0
     maturity: float = 1.0
@@ -73,6 +78,7 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--cvar-softplus-beta", type=float, default=None)
     parser.add_argument("--risk-name", type=str, default="cvar")
 
+    parser.add_argument("--put-or-call", type=str, default="call")
     parser.add_argument("--barrier", type=float, default=80.0)
     parser.add_argument("--strike", type=float, default=100.0)
     parser.add_argument("--maturity", type=float, default=1.0)
@@ -134,6 +140,7 @@ def parse_args() -> ExperimentConfig:
         cvar_alpha=args.cvar_alpha,
         cvar_softplus_beta=args.cvar_softplus_beta,
         risk_name=args.risk_name,
+        put_or_call=args.put_or_call,
         barrier=args.barrier,
         strike=args.strike,
         maturity=args.maturity,
@@ -601,7 +608,7 @@ def save_experiment_summary(
     feature_extractor: torch.nn.Module | None = None,
     save_terminal_distributions: bool = True,
 ) -> Path:
-    output_root = Path(config.log_dir)
+    output_root = Path(config.log_dir) / config.put_or_call
     run_dir = output_root / make_run_name(config)
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -655,6 +662,7 @@ def _jsonable(x: Any) -> Any:
 def make_pricing_payload(config: ExperimentConfig) -> dict[str, Any]:
     return {
         "product": {
+            "put_or_call": config.put_or_call,
             "barrier": float(config.barrier),
             "strike": float(config.strike),
             "maturity": float(config.maturity),
@@ -689,7 +697,7 @@ def get_or_compute_initial_cash(
     output_root = Path("premia")
     output_root.mkdir(parents=True, exist_ok=True)
 
-    premia_path = output_root / "barrier_call.json"
+    premia_path = output_root / "barrier.json"
     pricing_key = make_pricing_key(config)
 
     # Load cache if present
@@ -741,6 +749,7 @@ def main():
     learning_rate = config.learning_rate
     cvar_alpha = config.cvar_alpha
     cvar_softplus_beta = config.cvar_softplus_beta
+    put_or_call = config.put_or_call
     barrier = config.barrier
     strike = config.strike
     maturity = config.maturity
@@ -766,12 +775,20 @@ def main():
     model = HestonModel(parameters)
     product_grid = SimulationGrid(torch.linspace(0.0, maturity, int(observation_freq * maturity) + 1))
     control_grid = SimulationGrid(torch.linspace(0.0, maturity, int(hedging_freq * maturity) + 1).to(device))
-    product = DownAndOutCallOption(
-        maturity=maturity,
-        barrier=barrier,
-        strike=strike,
-        observation_grid=product_grid.time_grid,
-    )
+    if put_or_call == "call":
+        product = DownAndOutCallOption(
+            maturity=maturity,
+            barrier=barrier,
+            strike=strike,
+            observation_grid=product_grid.time_grid,
+        )
+    else:
+        product = DownAndOutPutOption(
+            maturity=maturity,
+            barrier=barrier,
+            strike=strike,
+            observation_grid=product_grid.time_grid,
+        )
 
     initial_cash = get_or_compute_initial_cash(
         config=config,
@@ -781,12 +798,20 @@ def main():
         n_pricing_paths=2**20,
     )
 
-    feature_extractor = DownAndOutCallFeatureExtractor(
-        maturity=maturity,
-        barrier=barrier,
-        strike=strike,
-        variance_feature_type=variance_feature_type,
-    )
+    if put_or_call == "call":
+        feature_extractor = DownAndOutCallFeatureExtractor(
+            maturity=maturity,
+            barrier=barrier,
+            strike=strike,
+            variance_feature_type=variance_feature_type,
+        )
+    else:
+        feature_extractor = DownAndOutPutFeatureExtractor(
+            maturity=maturity,
+            barrier=barrier,
+            strike=strike,
+            variance_feature_type=variance_feature_type,
+        )
     controller = MlpController(
         feature_dim=feature_extractor.feature_dim(),
         hidden_sizes=hidden_sizes

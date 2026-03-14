@@ -88,7 +88,8 @@ class HedgingTrainer:
         lr_decay_factor: float = 0.5,
         lr_patience: int = 5,
         min_learning_rate: float = 1e-3,
-        common_random_numbers: bool = True,
+        max_grad_norm: float | None = 2.0,
+        crn_refresh_freq: int | None = 50,
     ) -> TrainingSummary:
         if self.hedging_engine is None:
             raise RuntimeError("Call set_control_grid(grid) before train()")
@@ -118,25 +119,27 @@ class HedgingTrainer:
         # Fixed validation batch for stable model selection / stopping
         with torch.no_grad():
             val_simulated = self.model.simulate(batch_size=val_batch_size)
-            if common_random_numbers:
-                simulated = self.model.simulate(batch_size=batch_size)
+            simulated = self.model.simulate(batch_size=batch_size)
         start = time.perf_counter()
 
         for iter_idx in range(n_iters):
             self.optim.zero_grad(set_to_none=True)
 
-            if not common_random_numbers:
+            if crn_refresh_freq and iter_idx > 0 and iter_idx % crn_refresh_freq == 0:
                 with torch.no_grad():
                     simulated = self.model.simulate(batch_size=batch_size)
 
             hedge_result = self.hedging_engine.run(simulated)
             loss = self.risk.evaluate(hedge_result)
             loss.backward()
+            if max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(self.controller.parameters(), max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(self.feature_extractor.parameters(), max_grad_norm)
             self.optim.step()
 
             train_loss_value = float(loss.item())
             train_losses.append(train_loss_value)
-            learning_rates.append(_get_lr(self.optim))
+             
 
             msg = f"iter={iter_idx}, train_loss={train_loss_value:.5f}, lr={_get_lr(self.optim):.6g}"
 
@@ -148,7 +151,9 @@ class HedgingTrainer:
                 val_loss_value = float(val_loss.item())
                 val_losses.append(val_loss_value)
 
+                lr_before = _get_lr(self.optim)
                 scheduler.step(val_loss_value)
+                lr_after = _get_lr(self.optim)
 
                 improved = val_loss_value < (best_val_loss - early_stopping_min_delta)
                 if improved:
@@ -166,6 +171,15 @@ class HedgingTrainer:
                 else:
                     if iter_idx >= early_stopping_warmup:
                         no_improvement_count += 1
+
+                # If ReduceLROnPlateau lowered the LR, restore best known weights.
+                lr_reduced = lr_after < lr_before - 1e-15
+                if lr_reduced and best_state_dict_controller is not None:
+                    self.controller.load_state_dict(best_state_dict_controller)
+                    self.feature_extractor.load_state_dict(best_state_dict_fe)
+                    msg += f", reloaded_best_checkpoint=True"
+
+                msg += f", val_loss={val_loss_value:.5f}, best_val={best_val_loss:.5f}"
 
                 msg += f", val_loss={val_loss_value:.5f}, best_val={best_val_loss:.5f}"
 
