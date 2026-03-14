@@ -141,7 +141,7 @@ def load_runs(root: Path) -> pd.DataFrame:
     return df
 
 
-def load_pnl_tensor(run_dir: Path, tensor_filename: str) -> torch.Tensor:
+def load_terminal_payload(run_dir: Path, tensor_filename: str) -> dict[str, torch.Tensor]:
     tensor_path = run_dir / tensor_filename
     if not tensor_path.is_file():
         raise FileNotFoundError(f"Expected tensor file not found: {tensor_path}")
@@ -149,76 +149,15 @@ def load_pnl_tensor(run_dir: Path, tensor_filename: str) -> torch.Tensor:
     payload = torch.load(tensor_path, map_location="cpu")
     if not isinstance(payload, dict):
         raise ValueError(f"Expected dict payload in {tensor_path}, got {type(payload)}")
-    if "pnl" not in payload:
-        raise KeyError(f"'pnl' key not found in {tensor_path}. Available keys: {list(payload.keys())}")
 
-    pnl = payload["pnl"]
-    if not isinstance(pnl, torch.Tensor):
-        pnl = torch.as_tensor(pnl)
-    return pnl.detach().to(torch.float32).cpu().reshape(-1)
+    out: dict[str, torch.Tensor] = {}
+    for key, value in payload.items():
+        if isinstance(value, torch.Tensor):
+            out[key] = value.detach().cpu()
+        else:
+            out[key] = torch.as_tensor(value)
 
-
-def choose_bins(series_by_feature: dict[str, torch.Tensor], n_bins: int = 120) -> torch.Tensor:
-    vals = [v for v in series_by_feature.values() if v.numel() > 0]
-    if not vals:
-        raise ValueError("No non-empty PnL tensors available for histogram plotting.")
-    all_vals = torch.cat(vals)
-    lo = torch.quantile(all_vals, 0.001).item()
-    hi = torch.quantile(all_vals, 0.999).item()
-    if hi <= lo:
-        lo = float(all_vals.min().item())
-        hi = float(all_vals.max().item())
-    if hi <= lo:
-        hi = lo + 1e-6
-    return torch.linspace(lo, hi, n_bins + 1)
-
-
-def plot_histogram_for_regime(
-    df_regime: pd.DataFrame,
-    out_path: Path,
-    regime_name: str,
-    loss_name: str,
-    tensor_filename: str,
-    density: bool = True,
-    n_bins: int = 120,
-) -> None:
-    series_by_feature: dict[str, torch.Tensor] = {}
-
-    for feature in FEATURE_ORDER:
-        sub = df_regime[df_regime["variance_feature"] == feature]
-        if sub.empty:
-            continue
-        if len(sub) > 1:
-            sub = sub.sort_values(["seed", "run_name"]).head(1)
-        run_dir = Path(sub.iloc[0]["run_dir"])
-        series_by_feature[feature] = load_pnl_tensor(run_dir, tensor_filename)
-
-    if not series_by_feature:
-        raise ValueError(f"No matching runs found for regime={regime_name}, loss={loss_name}")
-
-    bins = choose_bins(series_by_feature, n_bins=n_bins)
-
-    plt.figure(figsize=(9, 5))
-    for feature in FEATURE_ORDER:
-        if feature not in series_by_feature:
-            continue
-        arr = series_by_feature[feature].numpy()
-        plt.hist(
-            arr,
-            bins=bins.numpy(),
-            density=density,
-            alpha=0.35,
-            label=FEATURE_LABELS.get(feature, feature),
-            histtype="step",
-        )
-
-    plt.xlabel("Terminal PnL")
-    plt.ylabel("Density" if density else "Count")
-    plt.title(f"PnL distribution — vol regime={regime_name}, loss={loss_name}")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=220, bbox_inches="tight")
-    plt.close()
+    return out
 
 
 def plot_log_survival_comparison(
@@ -271,7 +210,7 @@ def plot_log_survival_comparison(
                     sub = sub.sort_values(["seed", "run_name"]).head(1)
 
                 run_dir = Path(sub.iloc[0]["run_dir"])
-                pnl = load_pnl_tensor(run_dir, tensor_filename)
+                pnl = load_terminal_payload(run_dir, tensor_filename)["pnl"]
 
                 losses = -pnl
                 series.append((feature, loss, losses))
@@ -339,6 +278,247 @@ def plot_log_survival_comparison(
     plt.savefig(out_path, dpi=220)
     plt.close()
 
+def plot_hidden_state_vs_hidden_variance(
+    df_base: pd.DataFrame,
+    out_path: Path,
+    tensor_filename: str,
+    *,
+    variance_features: list[str] | None = None,
+    losses: list[str] | None = None,
+    max_points: int = 100_000,
+) -> None:
+    """
+    Scatter plot of learned hidden state vs true latent variance.
+
+    Expected saved tensors:
+        hidden_states   : [B, K, 1] or [B, K]
+        hidden_variance : [B, K]
+
+    One subplot per (vol_regime, variance_feature, loss) combination found.
+    """
+    if variance_features is None:
+        variance_features = ["learned", "gated"]
+    if losses is None:
+        losses = ["mse", "cvar"]
+
+    panels: list[tuple[str, str, str, Path]] = []
+    for vol_regime in ["normal", "stressed"]:
+        for feature in variance_features:
+            for loss in losses:
+                sub = df_base[
+                    (df_base["vol_regime"] == vol_regime)
+                    & (df_base["variance_feature"] == feature)
+                    & (df_base["loss_name"] == loss)
+                ]
+                if sub.empty:
+                    continue
+                sub = sub.sort_values(["seed", "run_name"]).head(1)
+                run_dir = Path(sub.iloc[0]["run_dir"])
+                panels.append((vol_regime, feature, loss, run_dir))
+
+    if not panels:
+        raise ValueError("No matching runs found for hidden-state scatter plot.")
+
+    n_panels = len(panels)
+    ncols = min(2, n_panels)
+    nrows = (n_panels + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(7 * ncols, 5 * nrows),
+        squeeze=False,
+    )
+    axes_flat = axes.flatten()
+
+    for ax, (vol_regime, feature, loss, run_dir) in zip(axes_flat, panels):
+        payload = load_terminal_payload(run_dir, tensor_filename)
+
+        if "hidden_states" not in payload or "hidden_variance" not in payload:
+            ax.set_visible(False)
+            continue
+
+        hs = payload["hidden_states"].to(torch.float32)
+        hv = payload["hidden_variance"].to(torch.float32)
+
+        if hs.ndim == 3:
+            if hs.shape[2] != 1:
+                raise ValueError(
+                    f"Expected hidden_states shape [B, K, 1], got {tuple(hs.shape)}"
+                )
+            hs = hs.squeeze(-1)
+        elif hs.ndim != 2:
+            raise ValueError(f"Expected hidden_states shape [B, K] or [B, K, 1], got {tuple(hs.shape)}")
+
+        if hv.ndim != 2:
+            raise ValueError(f"Expected hidden_variance shape [B, K], got {tuple(hv.shape)}")
+
+        x = hs.reshape(-1)
+        y = hv.reshape(-1)
+
+        n = x.numel()
+        if n > max_points:
+            idx = torch.randperm(n)[:max_points]
+            x = x[idx]
+            y = y[idx]
+
+        ax.scatter(
+            x.numpy(),
+            y.numpy(),
+            s=4,
+            alpha=0.15,
+            linewidths=0,
+        )
+        ax.set_xlabel("Learned hidden state")
+        ax.set_ylabel("Latent variance")
+        ax.set_title(
+            f"{FEATURE_LABELS.get(feature, feature)} / {loss.upper()}\n"
+            f"Vol regime: {vol_regime}"
+        )
+
+        if x.numel() > 1:
+            corr = torch.corrcoef(torch.stack([x, y]))[0, 1].item()
+            ax.text(
+                0.02,
+                0.98,
+                f"corr = {corr:.3f}",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+            )
+
+    for ax in axes_flat[n_panels:]:
+        ax.set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=220)
+    plt.close()
+
+def plot_hidden_state_vs_future_integrated_variance(
+    df_base: pd.DataFrame,
+    out_path: Path,
+    tensor_filename: str,
+    *,
+    variance_features: list[str] | None = None,
+    losses: list[str] | None = None,
+    maturity: float = 1.0,
+    n_steps: int = 252,
+    max_points: int = 100_000,
+) -> None:
+    """
+    Scatter plot of learned hidden state h_t against
+    integrated future latent variance \int_t^T v_s ds,
+    approximated on the saved hedge-time grid.
+
+    This uses hidden_variance, not realised future variance.
+    """
+    if variance_features is None:
+        variance_features = ["learned", "gated"]
+    if losses is None:
+        losses = ["mse", "cvar"]
+
+    dt = float(maturity) / float(n_steps)
+
+    panels: list[tuple[str, str, str, Path]] = []
+    for vol_regime in ["normal", "stressed"]:
+        for feature in variance_features:
+            for loss in losses:
+                sub = df_base[
+                    (df_base["vol_regime"] == vol_regime)
+                    & (df_base["variance_feature"] == feature)
+                    & (df_base["loss_name"] == loss)
+                ]
+                if sub.empty:
+                    continue
+                sub = sub.sort_values(["seed", "run_name"]).head(1)
+                run_dir = Path(sub.iloc[0]["run_dir"])
+                panels.append((vol_regime, feature, loss, run_dir))
+
+    if not panels:
+        raise ValueError("No matching runs found for future-integrated-variance scatter plot.")
+
+    n_panels = len(panels)
+    ncols = min(2, n_panels)
+    nrows = (n_panels + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(7 * ncols, 5 * nrows),
+        squeeze=False,
+    )
+    axes_flat = axes.flatten()
+
+    for ax, (vol_regime, feature, loss, run_dir) in zip(axes_flat, panels):
+        payload = load_terminal_payload(run_dir, tensor_filename)
+
+        if "hidden_states" not in payload or "hidden_variance" not in payload:
+            ax.set_visible(False)
+            continue
+
+        hs = payload["hidden_states"].to(torch.float32)
+        hv = payload["hidden_variance"].to(torch.float32)
+
+        if hs.ndim == 3:
+            if hs.shape[2] != 1:
+                raise ValueError(
+                    f"Expected hidden_states shape [B, K, 1], got {tuple(hs.shape)}"
+                )
+            hs = hs.squeeze(-1)
+        elif hs.ndim != 2:
+            raise ValueError(f"Expected hidden_states shape [B, K] or [B, K, 1], got {tuple(hs.shape)}")
+
+        if hv.ndim != 2:
+            raise ValueError(f"Expected hidden_variance shape [B, K], got {tuple(hv.shape)}")
+
+        # Approximate \int_t^T v_s ds by reverse cumulative sum.
+        future_integrated_var = torch.flip(
+            torch.cumsum(torch.flip(hv, dims=[1]), dim=1),
+            dims=[1],
+        ) * dt
+
+        x = hs.reshape(-1)
+        y = future_integrated_var.reshape(-1)
+
+        n = x.numel()
+        if n > max_points:
+            idx = torch.randperm(n)[:max_points]
+            x = x[idx]
+            y = y[idx]
+
+        ax.scatter(
+            x.numpy(),
+            y.numpy(),
+            s=4,
+            alpha=0.15,
+            linewidths=0,
+        )
+        ax.set_xlabel("Learned hidden state")
+        ax.set_ylabel(r"Approx. future integrated latent variance")
+        ax.set_title(
+            f"{FEATURE_LABELS.get(feature, feature)} / {loss.upper()}\n"
+            f"Vol regime: {vol_regime}"
+        )
+
+        if x.numel() > 1:
+            corr = torch.corrcoef(torch.stack([x, y]))[0, 1].item()
+            ax.text(
+                0.02,
+                0.98,
+                f"corr = {corr:.3f}",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+            )
+
+    for ax in axes_flat[n_panels:]:
+        ax.set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=220)
+    plt.close()
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot PnL histograms for selected architecture and volatility regimes.")
@@ -384,27 +564,30 @@ def main() -> None:
         quantile=0.95,
     )
     print(f"Wrote {out_path_tail}")
-    for regime in args.regimes:
-        df = dfbase[
-            (dfbase["vol_regime"] == regime)
-        ].copy()
-        if df.empty:
-            raise SystemExit("No runs match the requested filters after applying architecture / tc / barrier / loss / seed filters.")
-        for loss_name in ["cvar", "mse"]:
-            df_loss = df[df["loss_name"] == loss_name]            
 
-            if df_loss.empty:
-                raise SystemExit("No runs match the requested filters after applying architecture / tc / barrier / loss / seed filters.")
-            out_path_hist = out_dir / f"pnl_hist_arch_{args.arch}__loss_{loss_name}__regime_{regime}.png"
-            plot_histogram_for_regime(
-                df_regime=df_loss,
-                out_path=out_path_hist,
-                regime_name=regime,
-                loss_name=loss_name,
-                tensor_filename=args.tensor_filename,
-                density=not args.count_hist,
-            )
-            print(f"Wrote {out_path_hist}")
+    out_path_hv = out_dir / f"hidden_state_vs_hidden_variance_arch_{args.arch}.png"
+    plot_hidden_state_vs_hidden_variance(
+        df_base=dfbase,
+        out_path=out_path_hv,
+        tensor_filename=args.tensor_filename,
+        variance_features=["learned", "gated"],
+        losses=["cvar"],
+        max_points=100_000,
+    )
+    print(f"Wrote {out_path_hv}")
+
+    out_path_fiv = out_dir / f"hidden_state_vs_future_integrated_variance_arch_{args.arch}.png"
+    plot_hidden_state_vs_future_integrated_variance(
+        df_base=dfbase,
+        out_path=out_path_fiv,
+        tensor_filename=args.tensor_filename,
+        variance_features=["learned", "gated"],
+        losses=["cvar"],
+        maturity=1.0,
+        n_steps=252,
+        max_points=100_000,
+    )
+    print(f"Wrote {out_path_fiv}")
 
 
 

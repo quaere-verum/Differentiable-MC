@@ -13,7 +13,6 @@ class DownAndOutCallFeatureExtractor(FeatureExtractor):
     def __init__(
         self,
         maturity: float,
-        barrier: float,
         strike: float, 
         *,
         variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED_FILTER
@@ -21,7 +20,6 @@ class DownAndOutCallFeatureExtractor(FeatureExtractor):
         super().__init__()
         self._variance_feature_type = variance_feature_type
         self.register_buffer("maturity", torch.tensor(maturity, dtype=torch.float32))
-        self.register_buffer("barrier", torch.tensor(barrier, dtype=torch.float32))
         self.register_buffer("strike", torch.tensor(strike, dtype=torch.float32))
 
         if self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER:
@@ -80,11 +78,10 @@ class DownAndOutCallFeatureExtractor(FeatureExtractor):
         n_paths = S.size(0)
 
         tau = (self.get_buffer("maturity") - t).expand((n_paths, 1))
-        log_barrier_dist = (S / self.get_buffer("barrier")).log().unsqueeze(1)
         log_moneyness = (S / self.get_buffer("strike")).log().unsqueeze(1)
         alive = (S_min  > self.get_buffer("barrier")).to(S.dtype).unsqueeze(1)
 
-        features = [tau, log_barrier_dist, log_moneyness, alive]
+        features = [tau, log_moneyness, alive]
         if (
             self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER
             or self._variance_feature_type == VarianceFeatureType.LEARNED_GATED_FILTER
@@ -106,14 +103,13 @@ class DownAndOutCallFeatureExtractor(FeatureExtractor):
         )
     
     def feature_dim(self):
-        return 4 if self._variance_feature_type == VarianceFeatureType.NONE else 5
+        return 3 if self._variance_feature_type == VarianceFeatureType.NONE else 4
     
 
 class DownAndOutPutFeatureExtractor(FeatureExtractor):
     def __init__(
         self,
         maturity: float,
-        barrier: float,
         strike: float,
         *,
         variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED_FILTER,
@@ -122,7 +118,6 @@ class DownAndOutPutFeatureExtractor(FeatureExtractor):
         self._variance_feature_type = variance_feature_type
 
         self.register_buffer("maturity", torch.tensor(maturity, dtype=torch.float32))
-        self.register_buffer("barrier", torch.tensor(barrier, dtype=torch.float32))
         self.register_buffer("strike", torch.tensor(strike, dtype=torch.float32))
 
         if self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER:
@@ -185,12 +180,11 @@ class DownAndOutPutFeatureExtractor(FeatureExtractor):
         n_paths = S.size(0)
 
         tau = (self.get_buffer("maturity") - t).expand((n_paths, 1))
-        log_barrier_dist = (S / self.get_buffer("barrier")).log().unsqueeze(1)
         log_moneyness = (self.get_buffer("strike") / S).log().unsqueeze(1)
 
         alive = (S_min > self.get_buffer("barrier")).to(S.dtype).unsqueeze(1)
 
-        features = [tau, log_barrier_dist, log_moneyness, alive]
+        features = [tau, log_moneyness, alive]
 
         if self._variance_feature_type in (
             VarianceFeatureType.LEARNED_FILTER,
@@ -212,5 +206,5 @@ class DownAndOutPutFeatureExtractor(FeatureExtractor):
         return None
 
     def feature_dim(self):
-        return 4 if self._variance_feature_type == VarianceFeatureType.NONE else 5
+        return 3 if self._variance_feature_type == VarianceFeatureType.NONE else 4
     

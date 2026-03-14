@@ -35,7 +35,7 @@ class ExperimentConfig:
     seed: int = 0
     device: str = "cuda"
 
-    learning_rate: float = 0.05
+    learning_rate: float = 0.02
     min_learning_rate: float = 1e-5
     cvar_alpha: float = 0.95
     cvar_softplus_beta: float | None = None
@@ -56,6 +56,16 @@ class ExperimentConfig:
     n_eval_paths: int = 2**19
     n_train_iterations: int = 1000
     batch_size: int = 2**16
+    val_batch_size: int = 2**15,
+    validate_every: int = 5
+    early_stopping_patience: int = 15
+    early_stopping_min_delta: float = 1e-2
+    early_stopping_warmup: int = 10
+    lr_decay_factor: float = 0.5
+    lr_patience: int = 5
+    min_learning_rate: float = 1e-3
+    max_grad_norm: float | None = 2.0,
+    crn_refresh_freq: int | None = 50
 
     vol_regime: str = "normal"
     s0: float = 100.0
@@ -73,9 +83,9 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
 
-    parser.add_argument("--learning-rate", type=float, default=0.1)
+    parser.add_argument("--learning-rate", type=float, default=0.02)
     parser.add_argument("--cvar-alpha", type=float, default=0.95)
-    parser.add_argument("--cvar-softplus-beta", type=float, default=None)
+    parser.add_argument("--cvar-softplus-beta", type=float, default=20.0)
     parser.add_argument("--risk-name", type=str, default="cvar")
 
     parser.add_argument("--put-or-call", type=str, default="call")
@@ -94,6 +104,16 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--n-eval-paths", type=int, default=2**19)
     parser.add_argument("--n-train-iterations", type=int, default=1500)
     parser.add_argument("--batch-size", type=int, default=2**15)
+    parser.add_argument("--val-batch-size", type=int, default=2**15)
+    parser.add_argument("--validate-every", type=int, default=5)
+    parser.add_argument("--early-stopping-patience", type=int, default=15)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=1e-2)
+    parser.add_argument("--early-stopping-warmup", type=int, default=25)
+    parser.add_argument("--lr-decay-factor", type=float, default=0.5)
+    parser.add_argument("--lr-patience", type=int, default=5)
+    parser.add_argument("--min-lr", type=float, default=1e-4)
+    parser.add_argument("--max-grad-norm", type=float, default=2.0)
+    parser.add_argument("--crn-refresh-every", type=int, default=50)
 
     parser.add_argument("--vol-regime", type=str, default="normal")
     # parser.add_argument("--s0", type=float, default=100.0)
@@ -152,6 +172,16 @@ def parse_args() -> ExperimentConfig:
         n_eval_paths=args.n_eval_paths,
         n_train_iterations=args.n_train_iterations,
         batch_size=args.batch_size,
+        val_batch_size=args.val_batch_size,
+        validate_every=args.validate_every,
+        early_stopping_patience=args.early_stopping_patience,
+        early_stopping_min_delta=args.early_stopping_min_delta,
+        early_stopping_warmup=args.early_stopping_warmup,
+        lr_decay_factor=args.lr_decay_factor,
+        lr_patience=args.lr_patience,
+        min_learning_rate=args.min_lr,
+        max_grad_norm=args.max_grad_norm,
+        crn_refresh_freq=args.crn_refresh_every,
         vol_regime=vol_regime,
         s0=100.0,
         v0=v0,
@@ -896,7 +926,15 @@ def main():
         return hedge_result
 
     trainer.set_control_grid(control_grid)
-    training_summary = trainer.train(n_train_iterations, batch_size)
+    training_summary = trainer.train(
+        n_train_iterations, 
+        batch_size,
+        val_batch_size=config.val_batch_size,
+        validate_every=config.validate_every,
+        early_stopping_patience=config.early_stopping_patience,
+        early_stopping_min_delta=config.early_stopping_min_delta,
+        early_stopping_warmup=config.early_stopping_warmup,
+    )
     eval_result = eval(n_eval_paths)
     save_experiment_summary(
         config=config, 
