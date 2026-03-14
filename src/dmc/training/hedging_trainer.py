@@ -181,8 +181,6 @@ class HedgingTrainer:
 
                 msg += f", val_loss={val_loss_value:.5f}, best_val={best_val_loss:.5f}"
 
-                msg += f", val_loss={val_loss_value:.5f}, best_val={best_val_loss:.5f}"
-
                 if (
                     iter_idx >= early_stopping_warmup
                     and no_improvement_count >= early_stopping_patience

@@ -22,6 +22,54 @@
       }
     }
   },
+  "{\"model\":{\"kappa\":2.0,\"rho\":-0.6,\"s0\":100.0,\"theta\":0.04,\"v0\":0.04,\"xi\":0.35},\"product\":{\"barrier\":80.0,\"maturity\":1.0,\"put_or_call\":\"call\",\"strike\":100.0},\"simulation\":{\"observation_freq\":252}}": {
+    "mc_price_n_paths": 1048576,
+    "mc_standard_error": 0.010472133755683899,
+    "premium": 7.415470600128174,
+    "pricing_payload": {
+      "model": {
+        "kappa": 2.0,
+        "rho": -0.6,
+        "s0": 100.0,
+        "theta": 0.04,
+        "v0": 0.04,
+        "xi": 0.35
+      },
+      "product": {
+        "barrier": 80.0,
+        "maturity": 1.0,
+        "put_or_call": "call",
+        "strike": 100.0
+      },
+      "simulation": {
+        "observation_freq": 252
+      }
+    }
+  },
+  "{\"model\":{\"kappa\":2.0,\"rho\":-0.6,\"s0\":100.0,\"theta\":0.04,\"v0\":0.04,\"xi\":0.35},\"product\":{\"barrier\":80.0,\"maturity\":1.0,\"put_or_call\":\"put\",\"strike\":100.0},\"simulation\":{\"observation_freq\":252}}": {
+    "mc_price_n_paths": 1048576,
+    "mc_standard_error": 0.0035842761863023043,
+    "premium": 1.5258709192276,
+    "pricing_payload": {
+      "model": {
+        "kappa": 2.0,
+        "rho": -0.6,
+        "s0": 100.0,
+        "theta": 0.04,
+        "v0": 0.04,
+        "xi": 0.35
+      },
+      "product": {
+        "barrier": 80.0,
+        "maturity": 1.0,
+        "put_or_call": "put",
+        "strike": 100.0
+      },
+      "simulation": {
+        "observation_freq": 252
+      }
+    }
+  },
   "{\"model\":{\"kappa\":2.0,\"rho\":-0.6,\"s0\":100.0,\"theta\":0.04,\"v0\":0.04,\"xi\":0.35},\"product\":{\"barrier\":80.0,\"maturity\":1.0,\"strike\":100.0},\"simulation\":{\"observation_freq\":252}}": {
     "mc_price_n_paths": 1048576,
     "mc_standard_error": 0.010484453290700912,
