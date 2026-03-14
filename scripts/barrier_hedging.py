@@ -643,6 +643,9 @@ def save_experiment_summary(
             "total_transaction_cost": result.total_transaction_cost.detach().to(torch.float32).cpu().reshape(-1),
             "total_turnover": result.total_turnover.detach().to(torch.float32).cpu().reshape(-1),
         }
+        if result.hidden_states is not None:
+            terminal_payload["hidden_states"] = result.hidden_states.detach().to(torch.float16).cpu()[::1_000, :, :]
+            terminal_payload["hidden_variance"] = result.hidden_variance.detach().to(torch.float16).cpu()[::1_000, :]
         torch.save(terminal_payload, terminal_dist_path)
     return run_dir
 
