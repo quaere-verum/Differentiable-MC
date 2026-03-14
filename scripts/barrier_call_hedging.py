@@ -2,9 +2,9 @@ from dmc.models.heston import HestonModel, HestonParameters
 from dmc.simulation.simulation_grid import SimulationGrid
 from dmc.risk.mse import MSERisk
 from dmc.risk.cvar import CVaRRisk, VaREstimateType
-from dmc.products.barrier_option import DownAndOutBarrierOption
+from dmc.products.barrier_option import DownAndOutCallOption
 from dmc.control.mlp_controller import MlpController
-from dmc.feature_extraction.barrier_feature_extractor import BarrierOptionFeatureExtractor, VarianceFeatureType
+from dmc.feature_extraction.barrier_feature_extractor import DownAndOutCallFeatureExtractor, VarianceFeatureType
 from dmc.training.hedging_trainer import HedgingTrainer, TrainingSummary
 from dmc.hedging.hedging import ControlIntervals
 from itertools import chain
@@ -86,7 +86,7 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--variance-feature-type", type=str, default="learned")
 
     parser.add_argument("--n-eval-paths", type=int, default=2**19)
-    parser.add_argument("--n-train-iterations", type=int, default=1000)
+    parser.add_argument("--n-train-iterations", type=int, default=1500)
     parser.add_argument("--batch-size", type=int, default=2**15)
 
     parser.add_argument("--vol-regime", type=str, default="normal")
@@ -681,7 +681,7 @@ def make_pricing_key(config: ExperimentConfig) -> str:
 def get_or_compute_initial_cash(
     config: ExperimentConfig,
     model: HestonModel,
-    product: DownAndOutBarrierOption,
+    product: DownAndOutCallOption,
     device: torch.device | str,
     *,
     n_pricing_paths: int = 2**20,
@@ -689,7 +689,7 @@ def get_or_compute_initial_cash(
     output_root = Path("premia")
     output_root.mkdir(parents=True, exist_ok=True)
 
-    premia_path = output_root / "barrier.json"
+    premia_path = output_root / "barrier_call.json"
     pricing_key = make_pricing_key(config)
 
     # Load cache if present
@@ -766,7 +766,7 @@ def main():
     model = HestonModel(parameters)
     product_grid = SimulationGrid(torch.linspace(0.0, maturity, int(observation_freq * maturity) + 1))
     control_grid = SimulationGrid(torch.linspace(0.0, maturity, int(hedging_freq * maturity) + 1).to(device))
-    product = DownAndOutBarrierOption(
+    product = DownAndOutCallOption(
         maturity=maturity,
         barrier=barrier,
         strike=strike,
@@ -781,7 +781,7 @@ def main():
         n_pricing_paths=2**20,
     )
 
-    feature_extractor = BarrierOptionFeatureExtractor(
+    feature_extractor = DownAndOutCallFeatureExtractor(
         maturity=maturity,
         barrier=barrier,
         strike=strike,

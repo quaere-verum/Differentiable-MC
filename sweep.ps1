@@ -4,22 +4,25 @@ Set-Location $PSScriptRoot
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 Write-Host "Sweep timestamp = $timestamp"
 $hiddenSizesGrid = @(
-    ,@()
-    ,@(16)
-    ,@(16, 16)
-    ,@(16, 16, 16)
-    ,@(16, 16, 16, 16)
+    # ,@(16)
+    # ,@(16, 16, 16)
     ,@(16, 16, 16, 16, 16)
 )
 
 $barrierGrid = @(80.0)
 $transactionCostRateGrid = @(1e-3)
-$volregime = @("normal", "stressed")
-$lossName = @("mse", "cvar")
+$volregime = @(
+    #, "normal" 
+    , "stressed"
+)
+$lossName = @(
+    , "mse"
+    #, "cvar"
+)
 $varianceFeatureType = @(
-    , "markov" 
-    , "learned" 
-    , "none"
+    # , "markov" 
+    # , "learned" 
+    # , "none"
     , "gated"
 )
 

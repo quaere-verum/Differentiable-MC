@@ -1,0 +1,48 @@
+{
+  "{\"model\":{\"kappa\":1.5,\"rho\":-0.8,\"s0\":100.0,\"theta\":0.09,\"v0\":0.09,\"xi\":0.5},\"product\":{\"barrier\":80.0,\"maturity\":1.0,\"strike\":100.0},\"simulation\":{\"observation_freq\":252}}": {
+    "mc_price_n_paths": 1048576,
+    "mc_standard_error": 0.014477504417300224,
+    "premium": 10.17825698852539,
+    "pricing_payload": {
+      "model": {
+        "kappa": 1.5,
+        "rho": -0.8,
+        "s0": 100.0,
+        "theta": 0.09,
+        "v0": 0.09,
+        "xi": 0.5
+      },
+      "product": {
+        "barrier": 80.0,
+        "maturity": 1.0,
+        "strike": 100.0
+      },
+      "simulation": {
+        "observation_freq": 252
+      }
+    }
+  },
+  "{\"model\":{\"kappa\":2.0,\"rho\":-0.6,\"s0\":100.0,\"theta\":0.04,\"v0\":0.04,\"xi\":0.35},\"product\":{\"barrier\":80.0,\"maturity\":1.0,\"strike\":100.0},\"simulation\":{\"observation_freq\":252}}": {
+    "mc_price_n_paths": 1048576,
+    "mc_standard_error": 0.010484453290700912,
+    "premium": 7.40912389755249,
+    "pricing_payload": {
+      "model": {
+        "kappa": 2.0,
+        "rho": -0.6,
+        "s0": 100.0,
+        "theta": 0.04,
+        "v0": 0.04,
+        "xi": 0.35
+      },
+      "product": {
+        "barrier": 80.0,
+        "maturity": 1.0,
+        "strike": 100.0
+      },
+      "simulation": {
+        "observation_freq": 252
+      }
+    }
+  }
+}

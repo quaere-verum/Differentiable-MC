@@ -82,7 +82,7 @@ class HedgingTrainer:
         *,
         val_batch_size: int = 2**15,
         validate_every: int = 5,
-        early_stopping_patience: int = 10,
+        early_stopping_patience: int = 15,
         early_stopping_min_delta: float = 1e-2,
         early_stopping_warmup: int = 10,
         lr_decay_factor: float = 0.5,
