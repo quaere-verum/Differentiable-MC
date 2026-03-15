@@ -6,7 +6,6 @@ from dmc.products.barrier_option import DownAndOutCallOption, DownAndOutPutOptio
 from dmc.control.mlp_controller import MlpController
 from dmc.feature_extraction.barrier_feature_extractor import (
     DownAndOutCallFeatureExtractor,
-    DownAndOutPutFeatureExtractor,
     VarianceFeatureType,
 )
 from dmc.training.hedging_trainer import HedgingTrainer, TrainingSummary
@@ -48,7 +47,7 @@ class ExperimentConfig:
     transaction_cost_rate: float = 1e-3
 
     observation_freq: int = 252
-    hedging_freq: int = 252
+    hedging_freq: int = 52
 
     hidden_sizes: tuple[int, ...] = (16, 16)
     variance_feature_type: VarianceFeatureType = VarianceFeatureType.LEARNED_FILTER
@@ -56,7 +55,7 @@ class ExperimentConfig:
     n_eval_paths: int = 2**19
     n_train_iterations: int = 1000
     batch_size: int = 2**16
-    val_batch_size: int = 2**15,
+    val_batch_size: int = 2**15
     validate_every: int = 5
     early_stopping_patience: int = 15
     early_stopping_min_delta: float = 1e-2
@@ -64,7 +63,7 @@ class ExperimentConfig:
     lr_decay_factor: float = 0.5
     lr_patience: int = 5
     min_learning_rate: float = 1e-3
-    max_grad_norm: float | None = 2.0,
+    max_grad_norm: float | None = 2.0
     crn_refresh_freq: int | None = 50
 
     vol_regime: str = "normal"
@@ -83,7 +82,8 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
 
-    parser.add_argument("--learning-rate", type=float, default=0.02)
+    parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--min-lr", type=float, default=1e-6)
     parser.add_argument("--cvar-alpha", type=float, default=0.95)
     parser.add_argument("--cvar-softplus-beta", type=float, default=20.0)
     parser.add_argument("--risk-name", type=str, default="cvar")
@@ -96,22 +96,21 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--transaction-cost-rate", type=float, default=1e-3)
 
     parser.add_argument("--observation-freq", type=int, default=252)
-    parser.add_argument("--hedging-freq", type=int, default=252)
+    parser.add_argument("--hedging-freq", type=int, default=52)
 
-    parser.add_argument("--hidden-sizes", type=int, nargs="*", default=[])
+    parser.add_argument("--hidden-sizes", type=int, nargs="*", default=[16, 16])
     parser.add_argument("--variance-feature-type", type=str, default="learned")
 
     parser.add_argument("--n-eval-paths", type=int, default=2**19)
-    parser.add_argument("--n-train-iterations", type=int, default=1500)
+    parser.add_argument("--n-train-iterations", type=int, default=2000)
     parser.add_argument("--batch-size", type=int, default=2**15)
     parser.add_argument("--val-batch-size", type=int, default=2**15)
     parser.add_argument("--validate-every", type=int, default=5)
-    parser.add_argument("--early-stopping-patience", type=int, default=15)
-    parser.add_argument("--early-stopping-min-delta", type=float, default=1e-2)
+    parser.add_argument("--early-stopping-patience", type=int, default=25)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=1e-3)
     parser.add_argument("--early-stopping-warmup", type=int, default=25)
     parser.add_argument("--lr-decay-factor", type=float, default=0.5)
-    parser.add_argument("--lr-patience", type=int, default=5)
-    parser.add_argument("--min-lr", type=float, default=1e-4)
+    parser.add_argument("--lr-patience", type=int, default=8)
     parser.add_argument("--max-grad-norm", type=float, default=2.0)
     parser.add_argument("--crn-refresh-every", type=int, default=50)
 
@@ -224,16 +223,17 @@ class LoggedHedgingEngine:
     initial_cash: float
     transaction_cost_rate: float
     control_intervals: ControlIntervals
-    log_hidden_state: bool = False
 
     def __post_init__(self):
         self.control_indices: ControlIndices | None = None
+        self.simulation_grid: SimulationGrid | None = None
 
     def bind(self, sim_grid: SimulationGrid) -> None:
         self.control_indices = ControlIndices(
             start_idx=sim_grid.find_times_in_grid(self.control_intervals.start_times),
             end_idx=sim_grid.find_times_in_grid(self.control_intervals.end_times),
         )
+        self.simulation_grid = sim_grid
 
     def run(self, simulated: SimulationResult) -> LoggedHedgeResult:
         if self.control_indices is None:
@@ -271,40 +271,68 @@ class LoggedHedgingEngine:
         total_transaction_cost = torch.zeros((batch_size,), dtype=dtype, device=device)
         total_turnover = torch.zeros((batch_size,), dtype=dtype, device=device)
 
-        # Optional feature / hidden-state logs
         hidden_logs = None
         hidden_variance = None
 
         hidden_state_dim = self.feature_extractor.hidden_state_dim()
 
-        if self.log_hidden_state and hidden_state_dim is not None:
-            hidden_logs = torch.empty(
-                (batch_size, n_intervals, hidden_state_dim),
-                dtype=dtype,
-                device=device,
-            )
-            hidden_variance = torch.empty(
-                (batch_size, n_intervals),
-                dtype=dtype,
-                device=device,
-            )
-
         state = SimulationState()
         state.t_prev = 0.0
+        state.t = 0.0
         state.spot_previous = S.select(1, 0)
         state.spot_cumulative_min = S.select(1, 0)
         state.spot_cumulative_max = S.select(1, 0)
 
-        if hidden_state_dim is not None:
+        if simulated.variance is not None:
+            state.variance = simulated.variance.select(1, 0)
+        if simulated.short_rate is not None:
+            state.short_rate = simulated.short_rate.select(1, 0)
+
+        if hidden_state_dim:
             state.hidden_state = torch.zeros(
                 (batch_size, hidden_state_dim),
                 dtype=dtype,
                 device=device,
             )
+            hidden_logs = torch.empty(
+                (batch_size, n_intervals, hidden_state_dim),
+                dtype=dtype,
+                device=device,
+            )
+            if simulated.variance is not None:
+                hidden_variance = torch.empty(
+                    (batch_size, n_intervals),
+                    dtype=dtype,
+                    device=device,
+                )
+
+        last_obs_idx = 0
+        time_grid = self.simulation_grid.time_grid
 
         for k in range(n_intervals):
-            t0 = self.control_indices.start_idx[k]
-            t1 = self.control_indices.end_idx[k]
+            t0 = int(self.control_indices.start_idx[k].item())
+            t1 = int(self.control_indices.end_idx[k].item())
+            state.t_next = self.control_intervals.end_times[k]
+
+            for j in range(last_obs_idx + 1, t0):
+                state.spot = S.select(1, j)
+                state.spot_cumulative_min = torch.minimum(state.spot_cumulative_min, state.spot)
+                state.spot_cumulative_max = torch.maximum(state.spot_cumulative_max, state.spot)
+
+                if simulated.variance is not None:
+                    state.variance = simulated.variance.select(1, j)
+                if simulated.short_rate is not None:
+                    state.short_rate = simulated.short_rate.select(1, j)
+
+                state.t = time_grid[j]
+
+                if hidden_state_dim:
+                    state.hidden_state = self.feature_extractor.update_hidden_state(state)
+
+                state.t_prev = state.t
+                state.spot_previous = state.spot
+
+            last_obs_idx = t0
 
             state.spot = S.select(1, t0)
             state.spot_cumulative_min = torch.minimum(state.spot_cumulative_min, state.spot)
@@ -315,11 +343,13 @@ class LoggedHedgingEngine:
             if simulated.short_rate is not None:
                 state.short_rate = simulated.short_rate.select(1, t0)
 
-            state.t = self.control_intervals.start_times[k]
-            state.t_next = self.control_intervals.end_times[k]
+            state.t = time_grid[t0]
 
-            fe_output = self.feature_extractor.get_features(state)
-            hedge = self.controller.forward(fe_output.features)
+            if hidden_state_dim:
+                state.hidden_state = self.feature_extractor.update_hidden_state(state)
+
+            features = self.feature_extractor.get_features(state)
+            hedge = self.controller.forward(features)
 
             if hedge.ndim == 2 and hedge.shape[1] == 1:
                 hedge = hedge.squeeze(1)
@@ -333,7 +363,7 @@ class LoggedHedgingEngine:
             interval_pnl = hedge * (next_spot - state.spot)
             wealth = wealth + interval_pnl - cost
 
-            # Log current step
+            # Log current control step
             positions[:, k] = hedge
             trades[:, k] = trade
             transaction_costs[:, k] = cost
@@ -344,21 +374,17 @@ class LoggedHedgingEngine:
             total_transaction_cost = total_transaction_cost + cost
             total_turnover = total_turnover + torch.abs(trade)
 
-            if self.log_hidden_state and hidden_logs is not None:
-                if fe_output.hidden_state is None:
-                    raise RuntimeError(
-                        "log_hidden_state=True, but feature extractor returned no hidden state."
-                    )
-                hidden_logs[:, k, :] = fe_output.hidden_state
-                hidden_variance[:, k] = state.variance
+            if hidden_logs is not None:
+                hidden_logs[:, k, :] = state.hidden_state
+                if hidden_variance is not None:
+                    hidden_variance[:, k] = state.variance
 
-            # Advance state
-            state.hidden_state = fe_output.hidden_state
+            # Advance state to end of control decision
             state.t_prev = state.t
             state.spot_previous = state.spot
             position = hedge
 
-        final_spot = S.select(1, self.control_indices.end_idx[-1])
+        final_spot = S.select(1, int(self.control_indices.end_idx[-1].item()))
         liquidation_cost = self.transaction_cost_rate * final_spot * torch.abs(position)
         wealth = wealth - liquidation_cost
         total_transaction_cost = total_transaction_cost + liquidation_cost
@@ -636,7 +662,6 @@ def save_experiment_summary(
     training_summary: TrainingSummary,
     controller: torch.nn.Module,
     feature_extractor: torch.nn.Module | None = None,
-    save_terminal_distributions: bool = True,
 ) -> Path:
     output_root = Path(config.log_dir) / config.put_or_call
     run_dir = output_root / make_run_name(config)
@@ -647,7 +672,7 @@ def save_experiment_summary(
     training_path = run_dir / "training.json"
     controller_path = run_dir / "controller.pt"
     feature_extractor_path = run_dir / "feature_extractor.pt"
-    terminal_dist_path = run_dir / "terminal_distributions.pt"
+    terminal_dist_path = run_dir / "tensor_distributions.pt"
 
     config_payload = _to_serializable(config)
     metrics_payload = summarize_logged_hedge_result(result, config)
@@ -667,16 +692,15 @@ def save_experiment_summary(
     if feature_extractor is not None:
         torch.save(feature_extractor.state_dict(), feature_extractor_path)
 
-    if save_terminal_distributions:
-        terminal_payload = {
-            "pnl": result.pnl.detach().to(torch.float32).cpu().reshape(-1),
-            "total_transaction_cost": result.total_transaction_cost.detach().to(torch.float32).cpu().reshape(-1),
-            "total_turnover": result.total_turnover.detach().to(torch.float32).cpu().reshape(-1),
-        }
-        if result.hidden_states is not None:
-            terminal_payload["hidden_states"] = result.hidden_states.detach().to(torch.float16).cpu()[::1_000, :, :]
-            terminal_payload["hidden_variance"] = result.hidden_variance.detach().to(torch.float16).cpu()[::1_000, :]
-        torch.save(terminal_payload, terminal_dist_path)
+    terminal_payload = {
+        "pnl": result.pnl.detach().to(torch.float32).cpu().reshape(-1),
+        "total_transaction_cost": result.total_transaction_cost.detach().to(torch.float32).cpu().reshape(-1),
+        "total_turnover": result.total_turnover.detach().to(torch.float32).cpu().reshape(-1),
+    }
+    if result.hidden_states is not None:
+        terminal_payload["hidden_states"] = result.hidden_states.detach().to(torch.float16).cpu()[::1_000, :, :]
+        terminal_payload["hidden_variance"] = result.hidden_variance.detach().to(torch.float16).cpu()[::1_000, :]
+    torch.save(terminal_payload, terminal_dist_path)
     return run_dir
 
 def _jsonable(x: Any) -> Any:
@@ -839,12 +863,13 @@ def main():
             variance_feature_type=variance_feature_type,
         )
     else:
-        feature_extractor = DownAndOutPutFeatureExtractor(
-            maturity=maturity,
-            barrier=barrier,
-            strike=strike,
-            variance_feature_type=variance_feature_type,
-        )
+        raise NotImplementedError
+        # feature_extractor = DownAndOutPutFeatureExtractor(
+        #     maturity=maturity,
+        #     barrier=barrier,
+        #     strike=strike,
+        #     variance_feature_type=variance_feature_type,
+        # )
     controller = MlpController(
         feature_dim=feature_extractor.feature_dim(),
         hidden_sizes=hidden_sizes
@@ -909,7 +934,6 @@ def main():
                 start_times=control_grid.time_grid[:-1],
                 end_times=control_grid.time_grid[1:],
             ),
-            log_hidden_state=variance_feature_type == VarianceFeatureType.LEARNED_FILTER
         )
 
         risk = CVaRRisk(alpha=cvar_alpha, softplus_beta=None, var_estimate_type=VaREstimateType.BATCH)
@@ -934,6 +958,11 @@ def main():
         early_stopping_patience=config.early_stopping_patience,
         early_stopping_min_delta=config.early_stopping_min_delta,
         early_stopping_warmup=config.early_stopping_warmup,
+        lr_decay_factor=config.lr_decay_factor,
+        lr_patience=config.lr_patience,
+        min_learning_rate=config.min_learning_rate,
+        max_grad_norm=config.max_grad_norm,
+        crn_refresh_freq=config.crn_refresh_freq,
     )
     eval_result = eval(n_eval_paths)
     save_experiment_summary(

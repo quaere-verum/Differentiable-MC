@@ -34,12 +34,14 @@ class HedgingEngine:
 
     def __post_init__(self):
         self.control_indices: ControlIndices = None
+        self.simulation_grid: SimulationGrid = None
 
     def bind(self, sim_grid: SimulationGrid) -> None:
         self.control_indices = ControlIndices(
             start_idx=sim_grid.find_times_in_grid(self.control_intervals.start_times),
             end_idx=sim_grid.find_times_in_grid(self.control_intervals.end_times),
         )
+        self.simulation_grid = sim_grid
 
     def run(self, simulated: SimulationResult) -> HedgeResult:
         assert self.control_indices is not None, ("Bind to SimulationGrid before calling run.")
@@ -60,12 +62,36 @@ class HedgingEngine:
         if hidden_state_dim:
             state.hidden_state = torch.zeros((batch_size, hidden_state_dim), dtype=torch.float32, device=S.device)
 
-
-        # TODO: In caes of hidden state, consider looping over all observations and updating hidden state each time
+        last_obs_idx = 0
+        time_grid = self.simulation_grid.time_grid
         for k in range(self.control_intervals.n_intervals()):
             t0 = self.control_indices.start_idx[k]
             t1 = self.control_indices.end_idx[k]
+            state.t_next = self.control_intervals.end_times[k]
 
+            for j in range(last_obs_idx + 1, t0):
+                state.spot = S.select(1, j)
+
+                state.spot_cumulative_min = torch.minimum(
+                    state.spot_cumulative_min, state.spot
+                )
+                state.spot_cumulative_max = torch.maximum(
+                    state.spot_cumulative_max, state.spot
+                )
+
+                if simulated.variance is not None:
+                    state.variance = simulated.variance.select(1, j)
+                if simulated.short_rate is not None:
+                    state.short_rate = simulated.short_rate.select(1, j)
+
+                state.t = time_grid[j]
+
+
+                state.hidden_state = self.feature_extractor.update_hidden_state(state)
+                state.t_prev = state.t
+                state.spot_previous = state.spot
+
+            last_obs_idx = t0
             state.spot = S.select(1, t0)
             state.spot_cumulative_min = torch.minimum(state.spot_cumulative_min, state.spot)
             state.spot_cumulative_max = torch.maximum(state.spot_cumulative_max, state.spot)
@@ -75,17 +101,14 @@ class HedgingEngine:
             if simulated.short_rate is not None:
                 state.short_rate = simulated.short_rate.select(1, t0)
 
-            t = self.control_intervals.start_times[k]
-            t_next = self.control_intervals.end_times[k]
-            state.t = t
-            state.t_next = t_next
+            state.t = time_grid[t0]
 
-            fe_output = self.feature_extractor.get_features(state)
-            hedge = self.controller.forward(fe_output.features)
+            state.hidden_state = self.feature_extractor.update_hidden_state(state)
+            features = self.feature_extractor.get_features(state)
+            hedge = self.controller.forward(features)
             trade = hedge - position
             cost = self.transaction_cost_rate * state.spot * torch.abs(trade)
             
-            state.hidden_state = fe_output.hidden_state
             state.t_prev = state.t
             state.spot_previous = state.spot
 

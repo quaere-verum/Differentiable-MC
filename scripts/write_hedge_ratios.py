@@ -8,6 +8,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import re
 
 from dmc.control.mlp_controller import MlpController
 from dmc.feature_extraction.barrier_feature_extractor import (
@@ -285,11 +286,57 @@ def plot_curves(
     plt.savefig(out_path, dpi=220, bbox_inches="tight")
     plt.close()
 
+def _sanitize_float_str(x: float) -> str:
+    """
+    Make floats compact and directory-name safe.
+    """
+    s = f"{x:.12g}"
+    s = s.replace("-", "m").replace(".", "p")
+    return s
+
+def find_run_dir(root: Path, args) -> Path:
+
+    hidden = "x".join(map(str, args.hidden_sizes)) if args.hidden_sizes else "linear"
+
+    bar = _sanitize_float_str(args.barrier)
+    tc = _sanitize_float_str(args.transaction_cost_rate)
+
+    pattern = re.compile(
+        rf"^hs_{hidden}"
+        rf"__bar_{bar}"
+        rf"__tc_{tc}"
+        rf"__vol_{args.vol_regime}"
+        rf"__vf_{args.variance_feature_type}"
+        rf"__loss_{args.risk_name}"
+        rf"__seed_{args.seed}"
+        rf"__([0-9a-f]{{10}})$"
+    )
+
+    matches = [
+        d for d in root.iterdir()
+        if d.is_dir() and pattern.match(d.name)
+    ]
+
+    if len(matches) == 0:
+        raise RuntimeError("No matching run directory found.")
+
+    if len(matches) > 1:
+        raise RuntimeError(f"Multiple matching run directories: {matches}")
+
+    return matches[0]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Write hedge-ratio visualisations from a logged run.")
-    parser.add_argument("--run-dir", type=Path, required=True, help="Run directory containing config.json, controller.pt, feature_extractor.pt, terminal_distributions.pt")
+    parser.add_argument("--log-dir", type=Path, required=True, help="Run directory containing config.json, controller.pt, feature_extractor.pt, terminal_distributions.pt")
     parser.add_argument("--out-dir", type=Path, required=True, help="Output directory")
+    parser.add_argument("--hidden-sizes", type=int, nargs="*", default=[])
+    parser.add_argument("--vol-regime", type=str, required=True)
+    parser.add_argument("--variance-feature-type", type=int, required=True)
+    parser.add_argument("--risk-name", type=str, required=True)
+
+    parser.add_argument("--barrier", type=float, default=80.0)
+    parser.add_argument("--transaction-cost-rate", type=float, default=0.001)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--tensor-filename", type=str, default="terminal_distributions.pt")
     parser.add_argument("--n-logm", type=int, default=121, help="Number of log-moneyness grid points")
     parser.add_argument("--logm-min", type=float, default=-0.35)
@@ -301,7 +348,7 @@ def main() -> None:
     parser.add_argument("--tau-slices", type=float, nargs="*", default=[0.75, 0.25, 0.05])
     args = parser.parse_args()
 
-    run_dir = args.run_dir
+    run_dir = find_run_dir(args.log_dir, args)
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 

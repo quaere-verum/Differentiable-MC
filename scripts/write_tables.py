@@ -21,8 +21,8 @@ LOSS_LABELS = {
 
 FEATURE_ORDER = ["none", "filter", "gated", "markov"]
 LOSS_ORDER = ["mse", "cvar"]
-ARCH_ORDER = ["16", "16x16x16", "16x16x16x16x16"]
-MAIN_ARCH = "16x16x16x16x16"
+ARCH_ORDER = ["8x6", "16x16", "32x32", "64x64"]
+MAIN_ARCH = "64x64"
 
 
 def load_matrix(regime_dir: Path) -> pd.DataFrame:
@@ -318,38 +318,53 @@ def plot_metric_by_information(
         plt.close(fig)
 
 
-def plot_architecture_robustness(regimes: list[dict], matrices: dict[str, pd.DataFrame], out_path: Path) -> None:
+def plot_architecture_robustness(regimes: list[dict], matrices: dict[str, pd.DataFrame], figs_dir: Path) -> None:
     if not regimes:
         return
-    matrix = matrices[regimes[0]["regime_dir"]]
-    target_pairs = [("none", "cvar"), ("filter", "cvar"), ("gated", "cvar"), ("markov", "cvar")]
-    hidden_size = int(ARCH_ORDER[0].split("x")[0])
-    for arch in ARCH_ORDER:
-        assert all(int(x) == hidden_size for x in arch.split("x")), "hidden size must match across architectures."
-    n_hidden = {arch: len(arch.split("x")) for arch in ARCH_ORDER}
-
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-    for ax, metric_row, ylabel in zip(
-        axes,
-        [("pnl", "loss_cvar_alpha"), ("pnl", "std"), ("total_turnover", "mean")],
-        ["CVaR", "Standard Deviation", "Mean Turnover"],
-    ):
-        for feat, loss in target_pairs:
-            xs, ys = [], []
-            for arch in ARCH_ORDER:
-                col = (arch, feat, loss)
-                if col in matrix.columns:
-                    xs.append(n_hidden[arch])
-                    ys.append(matrix.loc[metric_row, col])
-            if xs:
-                ax.plot(xs, ys, marker="o", label=FEATURE_LABELS[feat])
-        ax.set_ylabel(ylabel)
-        ax.set_xlabel(f"Number of hidden layers (hidden size={hidden_size})")
-        ax.set_xticks(list(n_hidden.values()))
-        ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    for regime in regimes:
+        # matrix = matrices[regimes[0]["regime_dir"]]
+        matrix = matrices[regime["regime_dir"]]
+        target_pairs_cvar = [("none", "cvar"), ("filter", "cvar"), ("gated", "cvar"), ("markov", "cvar")]
+        target_pairs_mse = [("none", "mse"), ("filter", "mse"), ("gated", "mse"), ("markov", "mse")]
+        hidden_size = int(ARCH_ORDER[0].split("x")[0])
+        for arch in ARCH_ORDER:
+            assert all(int(x) == hidden_size for x in arch.split("x")), "hidden size must match across architectures."
+        n_hidden = {arch: len(arch.split("x")) for arch in ARCH_ORDER}
+        cmap = plt.get_cmap("tab10")
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        for ax, metric_row, ylabel in zip(
+            axes,
+            [("pnl", "loss_cvar_alpha"), ("pnl", "std"), ("total_turnover", "mean")],
+            ["CVaR", "Standard Deviation", "Mean Turnover"],
+        ):
+            
+            for k, (feat, loss) in enumerate(target_pairs_cvar):
+                c = cmap(k)
+                xs, ys = [], []
+                for arch in ARCH_ORDER:
+                    col = (arch, feat, loss)
+                    if col in matrix.columns:
+                        xs.append(n_hidden[arch])
+                        ys.append(matrix.loc[metric_row, col])
+                if xs:
+                    ax.plot(xs, ys, marker="o", label=FEATURE_LABELS[feat], c=c)
+            for k, (feat, loss) in enumerate(target_pairs_mse):
+                c = cmap(k)
+                xs, ys = [], []
+                for arch in ARCH_ORDER:
+                    col = (arch, feat, loss)
+                    if col in matrix.columns:
+                        xs.append(n_hidden[arch])
+                        ys.append(matrix.loc[metric_row, col])
+                if xs:
+                    ax.plot(xs, ys, marker="o", c=c, linestyle="--")
+            ax.set_ylabel(ylabel)
+            ax.set_xlabel(f"Number of hidden layers (hidden size={hidden_size})")
+            ax.set_xticks(list(n_hidden.values()))
+            ax.legend()
+        fig.tight_layout()
+        fig.savefig(figs_dir / f"{Path(regime["regime_dir"]).name}_architecture_robustness.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
 
 
 def main() -> None:
@@ -443,7 +458,7 @@ def main() -> None:
         figs_dir / "transaction_cost_by_information.png",
         "Mean Transaction Cost", arch=MAIN_ARCH
     )
-    plot_architecture_robustness(regimes, matrices, figs_dir / "architecture_robustness.png")
+    plot_architecture_robustness(regimes, matrices, figs_dir)
 
 
 if __name__ == "__main__":

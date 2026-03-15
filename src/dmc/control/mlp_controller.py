@@ -1,5 +1,4 @@
 from .controller import Controller
-from ..feature_extraction.feature_extractor import FeatureExtractorResult
 import torch
 
 class MlpController(Controller):

@@ -4,13 +4,16 @@ Set-Location $PSScriptRoot
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 Write-Host "Sweep timestamp = $timestamp"
 $optionTypes = @(
-    # , "call"
-    , "put"
+    , "call"
+    # , "put"
 )
 $hiddenSizesGrid = @(
-    # ,@(16)
-    # ,@(16, 16, 16)
-    ,@(16, 16, 16, 16, 16)
+    ,@(256, 256)
+    ,@(128, 128)
+    ,@(64, 64)
+    ,@(32, 32)
+    ,@(16, 16)
+    ,@(8, 8)
 )
 
 $barrierGrid = @(80.0)
@@ -24,10 +27,10 @@ $lossName = @(
     , "cvar"
 )
 $varianceFeatureType = @(
+    , "gated"
     , "markov" 
     , "learned" 
     , "none"
-    , "gated"
 )
 
 $runCount = 0

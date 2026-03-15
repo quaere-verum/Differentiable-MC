@@ -406,7 +406,7 @@ def plot_hidden_state_vs_future_integrated_variance(
     n_steps: int = 252,
     max_points: int = 100_000,
 ) -> None:
-    """
+    r"""
     Scatter plot of learned hidden state h_t against
     integrated future latent variance \int_t^T v_s ds,
     approximated on the saved hedge-time grid.
@@ -524,7 +524,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Plot PnL histograms for selected architecture and volatility regimes.")
     parser.add_argument("--log-dir", type=Path, required=True, help="Root log directory containing run subdirectories.")
     parser.add_argument("--out-dir", type=Path, required=True, help="Output directory for histogram figures.")
-    parser.add_argument("--arch", type=str, default="16x16x16", help="Hidden architecture label after normalisation, e.g. 16x16x16.")
+    parser.add_argument("--arch", type=str, default="64x64", help="Hidden architecture label after normalisation, e.g. 16x16.")
     parser.add_argument("--tc", type=float, default=1e-3, help="Transaction cost rate to filter on.")
     parser.add_argument("--barrier", type=float, default=80.0, help="Barrier level to filter on.")
     parser.add_argument("--seed", type=int, default=0, help="Seed to filter on.")
