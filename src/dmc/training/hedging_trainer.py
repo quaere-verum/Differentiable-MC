@@ -139,9 +139,9 @@ class HedgingTrainer:
 
             train_loss_value = float(loss.item())
             train_losses.append(train_loss_value)
-             
+            learning_rates.append(_get_lr(self.optim))
 
-            msg = f"iter={iter_idx}, train_loss={train_loss_value:.5f}, lr={_get_lr(self.optim):.6g}"
+            msg = f"iter={iter_idx}, train_loss={train_loss_value:.5f}, lr={learning_rates[-1]:.6g}"
 
             if iter_idx % validate_every == 0:
                 with torch.no_grad():

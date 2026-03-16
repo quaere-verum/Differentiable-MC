@@ -96,12 +96,8 @@ class DownAndOutCallFeatureExtractor(FeatureExtractor):
     
     def hidden_state_dim(self):
         return (
-            1 
-            if self._variance_feature_type == VarianceFeatureType.LEARNED_FILTER 
+            None if self._variance_feature_type == VarianceFeatureType.NONE 
             else 1
-            if self._variance_feature_type == VarianceFeatureType.LEARNED_GATED_FILTER
-            else 
-            None
         )
     
     def feature_dim(self):

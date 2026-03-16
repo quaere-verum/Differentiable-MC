@@ -99,10 +99,10 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--hedging-freq", type=int, default=52)
 
     parser.add_argument("--hidden-sizes", type=int, nargs="*", default=[16, 16])
-    parser.add_argument("--variance-feature-type", type=str, default="learned")
+    parser.add_argument("--variance-feature-type", type=str, default="markov")
 
     parser.add_argument("--n-eval-paths", type=int, default=2**19)
-    parser.add_argument("--n-train-iterations", type=int, default=2000)
+    parser.add_argument("--n-train-iterations", type=int, default=5000)
     parser.add_argument("--batch-size", type=int, default=2**15)
     parser.add_argument("--val-batch-size", type=int, default=2**15)
     parser.add_argument("--validate-every", type=int, default=5)
